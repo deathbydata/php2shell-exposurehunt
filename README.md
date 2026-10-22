@@ -111,7 +111,7 @@ The PHP detection block is identical within each OS's three hunts. Change all th
   - The detection regexes, read from the queries, against known PHP and non-PHP file names.
   - The lookback rules: defined once per hunt, used everywhere, the same value in all hunts, and at most 30d.
   - That every regex quoted in this README is identical to the one in the queries.
-- **Live - Note these queries have been used to detect real PHP instances in Windows and Linux across XDR, but have not been extensively tested with intentional positive control tests:** [`docs/positive-control-test-windows.md`](docs/positive-control-test-windows.md) and [`docs/positive-control-test-linux.md`](docs/positive-control-test-linux.md).
+- **Live - Note these queries have been used to detect real PHP instances in Windows and Linux across XDR, but have not been extensively tested with intentional positive control tests. This will be removed when I test them, or you can test and submit a PR :) :** [`docs/positive-control-test-windows.md`](docs/positive-control-test-windows.md) and [`docs/positive-control-test-linux.md`](docs/positive-control-test-linux.md).
 
 The offline checks prove syntax, column names, consistency and name matching, not results. Only the positive-control tests prove detection.
 
