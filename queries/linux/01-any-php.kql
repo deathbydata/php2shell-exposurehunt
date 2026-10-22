@@ -1,0 +1,22 @@
+// PHP2Shell hunt 1/3 (Linux): which Linux devices show any sign of PHP? Yes/no only - hunt 2 breaks the evidence out.
+// Surface: Defender XDR Advanced Hunting (the TVM table is not queryable in Sentinel). Scope: onboarded Linux endpoints, lookback set once by Lookback below (default 30d, the Advanced Hunting maximum).
+// Default results: every onboarded Linux device; servers first, then "PHP seen" first within each group. All "Not seen" = no PHP on any onboarded Linux device.
+// To return evidence-only rows, uncomment the line marked "uncomment for evidence-only rows".
+// PHP detection block below is identical in Linux hunts 1, 2 and 3 - change all three together.
+// No library-load check on Linux: PHP inside Apache (mod_php), or php-fpm started before the lookback window, is found via installed packages.
+let Lookback = 30d;                                                                          // event window for every check: max 30d in XDR Advanced Hunting
+let PhpDevices = union
+    (DeviceProcessEvents | where Timestamp > ago(Lookback) and (FileName startswith "php" or FileName startswith "lsphp" or FileName =~ "frankenphp")    // PHP binaries started
+        | where FileName matches regex @"(?i)^(php[\d.]*|php-(fpm|cgi)[\d.]*|lsphp[\d.]*|frankenphp)$"),
+    (DeviceTvmSoftwareInventory | where SoftwareName contains "php" or SoftwareVendor =~ "php")                                               // PHP packages, incl. mod_php / php-fpm
+| distinct DeviceId | extend PHP = "PHP seen";
+// Device list: onboarded Linux endpoints only. Discovered/unmanaged devices have no telemetry to check.
+DeviceInfo | where Timestamp > ago(Lookback) and OSPlatform == "Linux"
+| summarize arg_max(Timestamp, OSDistribution, OnboardingStatus, DeviceCategory, DeviceType) by DeviceId, DeviceName
+| where OnboardingStatus == "Onboarded" and DeviceCategory == "Endpoint"
+| lookup kind=leftouter PhpDevices on DeviceId
+| extend PHP = iff(isempty(PHP), "Not seen", PHP)
+// | where PHP == "PHP seen"                                                                 // uncomment for evidence-only rows
+| extend IsServer = DeviceType == "Server"                                                   // servers sort to the top
+| order by IsServer desc, PHP desc, DeviceName asc                                          // servers, then PHP seen first
+| project DeviceName, OSDistribution, DeviceType, PHP, LastSeen = Timestamp

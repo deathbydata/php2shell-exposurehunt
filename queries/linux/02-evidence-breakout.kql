@@ -1,0 +1,36 @@
+// PHP2Shell hunt 2/3 (Linux): PHP evidence broken out per check, with versions. Devices hunt 1 flagged appear first.
+// Surface: Defender XDR Advanced Hunting (the TVM table is not queryable in Sentinel). Scope: onboarded Linux endpoints, lookback set once by Lookback below (default 30d, the Advanced Hunting maximum).
+// Default results: every onboarded Linux device; servers first, then devices with PHP evidence first ("Not Detected" = that check found nothing).
+// To return evidence-only rows, uncomment the line marked "uncomment for evidence-only rows".
+// Fixed releases (21 Oct 2026): 8.5.12, 8.4.27, 8.3.36, 8.2.35. Distros backport fixes WITHOUT changing the upstream version:
+// confirm with the package changelog or distro security tracker (e.g. apt changelog <pkg> | grep CVE-2026-1096, rpm -q --changelog <pkg>).
+// PHP detection block below is identical in Linux hunts 1, 2 and 3 - change all three together. Here each check also records what it found.
+let Lookback = 30d;                                                                          // event window for every check: max 30d in XDR Advanced Hunting
+let ND = (a:dynamic) { iff(array_length(a) > 0, strcat_array(a, ", "), "Not Detected") };
+let Evidence = union
+    (DeviceProcessEvents | where Timestamp > ago(Lookback) and (FileName startswith "php" or FileName startswith "lsphp" or FileName =~ "frankenphp")    // PHP binaries started
+        | where FileName matches regex @"(?i)^(php[\d.]*|php-(fpm|cgi)[\d.]*|lsphp[\d.]*|frankenphp)$"
+        | extend Ver = extract(@"(?i)php-?(?:fpm|cgi)?/?(\d+\.\d+)", 1, strcat(FileName, " ", FolderPath, " ", ProcessCommandLine))   // e.g. php-fpm8.3, /etc/php/8.3/
+        | extend Check = "Process", Item = iff(isempty(Ver), FileName, strcat(FileName, " (", Ver, ".x)"))),
+    (DeviceTvmSoftwareInventory | where SoftwareName contains "php" or SoftwareVendor =~ "php"                                                // PHP packages, incl. mod_php / php-fpm
+        | extend Check = "Package", Item = strcat(SoftwareName, " ", SoftwareVersion))
+| summarize by DeviceId, Check, Item                                                         // de-duplicate before building lists
+| summarize PHPProcesses = make_set_if(Item, Check == "Process", 10),                        // Linux binaries carry no version info: major.minor hint from name or path only
+            PHPPackages = make_set_if(Item, Check == "Package", 10) by DeviceId;              // distro package version; check changelog for backported fixes
+// Current IPv4 addresses: latest report per network adapter in the last 7 days, link-local addresses removed.
+let IPs = DeviceNetworkInfo | where Timestamp > ago(7d)
+| summarize arg_max(Timestamp, IPAddresses) by DeviceId, NetworkAdapterName
+| mv-expand IP = parse_json(IPAddresses) | extend Addr = tostring(IP.IPAddress)
+| where isnotempty(parse_ipv4(Addr)) and Addr !startswith "169.254."
+| summarize IPv4 = make_set(Addr, 10) by DeviceId;
+// Device list: onboarded Linux endpoints only. Discovered/unmanaged devices have no telemetry to check.
+DeviceInfo | where Timestamp > ago(Lookback) and OSPlatform == "Linux"
+| summarize arg_max(Timestamp, OSDistribution, OnboardingStatus, DeviceCategory, DeviceType) by DeviceId, DeviceName
+| where OnboardingStatus == "Onboarded" and DeviceCategory == "Endpoint"
+| lookup kind=leftouter Evidence on DeviceId
+| extend HasEvidence = isnotempty(PHPProcesses) or isnotempty(PHPPackages)
+// | where HasEvidence                                                                       // uncomment for evidence-only rows
+| lookup kind=leftouter IPs on DeviceId
+| extend IsServer = DeviceType == "Server"                                                   // servers sort to the top
+| order by IsServer desc, HasEvidence desc, DeviceName asc                                  // servers, then evidence first
+| project DeviceName, OSDistribution, DeviceType, IPv4, PHPProcesses = ND(PHPProcesses), PHPPackages = ND(PHPPackages), LastSeen = Timestamp

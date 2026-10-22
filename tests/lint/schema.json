@@ -1,0 +1,9 @@
+{
+  "_comment": "Columns used by the hunts, checked against Microsoft Learn Defender XDR table references (Oct 2026). Add columns here if a query starts using new ones.",
+  "DeviceProcessEvents": "(Timestamp:datetime, DeviceId:string, DeviceName:string, FileName:string, FolderPath:string, ProcessCommandLine:string, ProcessVersionInfoProductVersion:string)",
+  "DeviceImageLoadEvents": "(Timestamp:datetime, DeviceId:string, DeviceName:string, FileName:string, FolderPath:string, InitiatingProcessFileName:string)",
+  "DeviceTvmSoftwareInventory": "(DeviceId:string, DeviceName:string, OSPlatform:string, SoftwareVendor:string, SoftwareName:string, SoftwareVersion:string)",
+  "DeviceNetworkInfo": "(Timestamp:datetime, DeviceId:string, DeviceName:string, NetworkAdapterName:string, IPAddresses:string)",
+  "DeviceInfo": "(Timestamp:datetime, DeviceId:string, DeviceName:string, OSPlatform:string, OSDistribution:string, OnboardingStatus:string, DeviceCategory:string, DeviceType:string)",
+  "DeviceNetworkEvents": "(Timestamp:datetime, DeviceId:string, DeviceName:string, ActionType:string, LocalPort:int, RemoteIP:string, RemoteIPType:string, InitiatingProcessFileName:string, InitiatingProcessCommandLine:string)"
+}

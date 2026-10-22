@@ -1,0 +1,11 @@
+{
+  "name": "php2shell-exposurehunt-lint",
+  "private": true,
+  "description": "Offline checks for the PHP2Shell hunting queries",
+  "scripts": {
+    "test": "node kql-lint.js && node detection-consistency.js && node patterns.test.js && node lookback.test.js && node readme-sync.test.js"
+  },
+  "dependencies": {
+    "@kusto/language-service-next": "12.4.1"
+  }
+}

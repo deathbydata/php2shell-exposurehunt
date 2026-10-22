@@ -1,0 +1,49 @@
+// PHP2Shell hunt 3/3 (Linux, safety net): what is actively serving web traffic, and has PHP been seen on it?
+// Surface: Defender XDR Advanced Hunting (the TVM table is not queryable in Sentinel). Scope: onboarded Linux endpoints, lookback set once by Lookback below (default 30d, the Advanced Hunting maximum).
+// Default results: every onboarded Linux device; servers first, then within each group: PHP seen, blind spot, serving, rest.
+// To return only devices serving web or running a web server, uncomment the line marked "uncomment for evidence-only rows".
+// Read the PHP column: "PHP seen" -> details in hunt 2; with public sources = priority.
+//   "Not seen" -> a web server process started in the window and no PHP was seen: PHP is not there (high confidence).
+//   "Not seen - no web server start in <N>d" -> serving, but no process start to inspect: the residual blind spot. Common on Linux,
+//   where nginx/Apache run for months. The "via" process in ActiveWebPorts says what is listening. Check on the host:
+//   php -v ; apachectl -M 2>/dev/null | grep -i php ; ls -d /etc/php* /etc/opt/remi/php* 2>/dev/null
+let Lookback = 30d;                                                                          // event window for every check: max 30d in XDR Advanced Hunting
+let ND = (a:dynamic) { iff(array_length(a) > 0, strcat_array(a, ", "), "Not Detected") };
+// Check 1: inbound connections accepted on web ports, and the process that accepted them. Proves a device is serving,
+// even if its web server started before the lookback window.
+let Active = DeviceNetworkEvents
+| where Timestamp > ago(Lookback) and ActionType == "InboundConnectionAccepted"
+| where LocalPort in (80, 443, 8080, 8443) and RemoteIPType != "Loopback"
+| extend Listener = iff(isempty(InitiatingProcessFileName), "unknown", InitiatingProcessFileName)   // process that accepted the connection
+| summarize Sources = dcount(RemoteIP), Public = dcountif(RemoteIP, RemoteIPType == "Public"), Listeners = make_set(Listener, 5) by DeviceId, LocalPort
+| summarize ActiveWebPorts = make_set(strcat(LocalPort, " (", Sources, " sources, ", Public, " public) via ", strcat_array(Listeners, "/")), 10) by DeviceId;
+// Check 2: web server processes that started in the window.
+let Web = DeviceProcessEvents
+| where Timestamp > ago(Lookback) and FileName in~ ("httpd", "apache2", "nginx", "lshttpd", "litespeed", "openlitespeed", "caddy", "lighttpd", "frankenphp")
+| summarize WebServers = make_set(FileName, 10) by DeviceId;
+// Check 3: PHP seen? PHP detection block below is identical in Linux hunts 1, 2 and 3 - change all three together.
+let PhpSeen = union
+    (DeviceProcessEvents | where Timestamp > ago(Lookback) and (FileName startswith "php" or FileName startswith "lsphp" or FileName =~ "frankenphp")    // PHP binaries started
+        | where FileName matches regex @"(?i)^(php[\d.]*|php-(fpm|cgi)[\d.]*|lsphp[\d.]*|frankenphp)$"),
+    (DeviceTvmSoftwareInventory | where SoftwareName contains "php" or SoftwareVendor =~ "php")                                               // PHP packages, incl. mod_php / php-fpm
+| distinct DeviceId | extend PHP = "PHP seen (see hunt 2)";
+// Current IPv4 addresses: latest report per network adapter in the last 7 days, link-local addresses removed.
+let IPs = DeviceNetworkInfo | where Timestamp > ago(7d)
+| summarize arg_max(Timestamp, IPAddresses) by DeviceId, NetworkAdapterName
+| mv-expand IP = parse_json(IPAddresses) | extend Addr = tostring(IP.IPAddress)
+| where isnotempty(parse_ipv4(Addr)) and Addr !startswith "169.254."
+| summarize IPv4 = make_set(Addr, 10) by DeviceId;
+// Device list: onboarded Linux endpoints only. Discovered/unmanaged devices have no telemetry to check.
+DeviceInfo | where Timestamp > ago(Lookback) and OSPlatform == "Linux"
+| summarize arg_max(Timestamp, OSDistribution, OnboardingStatus, DeviceCategory, DeviceType) by DeviceId, DeviceName
+| where OnboardingStatus == "Onboarded" and DeviceCategory == "Endpoint"
+| lookup kind=leftouter Active on DeviceId
+| lookup kind=leftouter Web on DeviceId
+| extend Serving = isnotempty(ActiveWebPorts) or isnotempty(WebServers)
+// | where Serving                                                                           // uncomment for evidence-only rows
+| lookup kind=leftouter PhpSeen on DeviceId
+| lookup kind=leftouter IPs on DeviceId
+| extend PHP = case(isnotempty(PHP), PHP, isnotempty(WebServers) or isempty(ActiveWebPorts), "Not seen", strcat("Not seen - no web server start in ", toint(Lookback / 1d), "d"))
+| extend IsServer = DeviceType == "Server"                                                   // servers sort to the top
+| order by IsServer desc, PHP desc, Serving desc, DeviceName asc                            // servers, then PHP seen, blind spot, serving, rest
+| project DeviceName, OSDistribution, DeviceType, IPv4, PHP, ActiveWebPorts = ND(ActiveWebPorts), WebServers = ND(WebServers), LastSeen = Timestamp

@@ -1,0 +1,38 @@
+// PHP2Shell hunt 2/3: PHP evidence broken out per check, with versions. Devices hunt 1 flagged appear first.
+// Surface: Defender XDR Advanced Hunting (the TVM table is not queryable in Sentinel). Scope: onboarded Windows endpoints, lookback set once by Lookback below (default 30d, the Advanced Hunting maximum).
+// Default results: every onboarded Windows device; servers first, then devices with PHP evidence first ("Not Detected" = that check found nothing).
+// To return evidence-only rows, uncomment the line marked "uncomment for evidence-only rows".
+// Fixed releases (21 Oct 2026) to compare versions against: 8.5.12, 8.4.27, 8.3.36, 8.2.35. Older branches have no upstream fix.
+// PHP detection block below is identical in hunts 1, 2 and 3 - change all three together. Here each check also records what it found.
+let Lookback = 30d;                                                                          // event window for every check: max 30d in XDR Advanced Hunting
+let ND = (a:dynamic) { iff(array_length(a) > 0, strcat_array(a, ", "), "Not Detected") };
+let Evidence = union
+    (DeviceProcessEvents | where Timestamp > ago(Lookback) and (FileName startswith "php" or FileName =~ "frankenphp.exe")    // PHP executables started
+        | where FileName matches regex @"(?i)^(php(-cgi|-win)?|frankenphp)\.exe$"
+        | extend Check = "Process", Item = iff(isempty(ProcessVersionInfoProductVersion), FileName, strcat(FileName, " ", ProcessVersionInfoProductVersion))),
+    (DeviceImageLoadEvents | where Timestamp > ago(Lookback) and FileName startswith "php"                                    // PHP engine DLLs loaded (IIS, Apache)
+        | where FileName matches regex @"(?i)^php\d*(ts|isapi|apache[\w_]*)?\.dll$"
+        | extend Check = "Dll", Item = strcat(FileName, " (", InitiatingProcessFileName, ")")),
+    (DeviceTvmSoftwareInventory | where SoftwareName has "php" or SoftwareVendor =~ "php"                                // PHP in installed software
+        | extend Check = "Software", Item = strcat(SoftwareName, " ", SoftwareVersion))
+| summarize by DeviceId, Check, Item                                                         // de-duplicate before building lists
+| summarize PHPProcesses = make_set_if(Item, Check == "Process", 10),                        // version read from the binary itself; frankenphp.exe shows FrankenPHP's own version
+            PHPDlls = make_set_if(Item, Check == "Dll", 10),                                  // DLL name gives the major version; host shows IIS (w3wp.exe) or Apache (httpd.exe)
+            PHPSoftware = make_set_if(Item, Check == "Software", 10) by DeviceId;              // zip installs usually don't register here
+// Current IPv4 addresses: latest report per network adapter in the last 7 days, link-local addresses removed.
+let IPs = DeviceNetworkInfo | where Timestamp > ago(7d)
+| summarize arg_max(Timestamp, IPAddresses) by DeviceId, NetworkAdapterName
+| mv-expand IP = parse_json(IPAddresses) | extend Addr = tostring(IP.IPAddress)
+| where isnotempty(parse_ipv4(Addr)) and Addr !startswith "169.254."
+| summarize IPv4 = make_set(Addr, 10) by DeviceId;
+// Device list: onboarded Windows endpoints only. Discovered/unmanaged devices have no telemetry to check.
+DeviceInfo | where Timestamp > ago(Lookback) and OSPlatform startswith "Windows"
+| summarize arg_max(Timestamp, OSPlatform, OnboardingStatus, DeviceCategory) by DeviceId, DeviceName
+| where OnboardingStatus == "Onboarded" and DeviceCategory == "Endpoint"
+| lookup kind=leftouter Evidence on DeviceId
+| extend HasEvidence = isnotempty(PHPProcesses) or isnotempty(PHPDlls) or isnotempty(PHPSoftware)
+// | where HasEvidence                                                                       // uncomment for evidence-only rows
+| lookup kind=leftouter IPs on DeviceId
+| extend IsServer = OSPlatform startswith "WindowsServer"                                 // servers sort to the top
+| order by IsServer desc, HasEvidence desc, DeviceName asc                                  // servers, then evidence first
+| project DeviceName, OSPlatform, IPv4, PHPProcesses = ND(PHPProcesses), PHPDlls = ND(PHPDlls), PHPSoftware = ND(PHPSoftware), LastSeen = Timestamp

@@ -1,0 +1,52 @@
+// PHP2Shell hunt 3/3 (safety net): what is actively serving web traffic, and has PHP been seen on it?
+// Surface: Defender XDR Advanced Hunting (the TVM table is not queryable in Sentinel). Scope: onboarded Windows endpoints, lookback set once by Lookback below (default 30d, the Advanced Hunting maximum).
+// Default results: every onboarded Windows device; servers first, then within each group: PHP seen, blind spot, serving, rest.
+// To return only devices serving web or running a web server, uncomment the line marked "uncomment for evidence-only rows".
+// Read the PHP column: "PHP seen" -> details in hunt 2; with public sources = priority.
+//   "Not seen" -> a web server process started in the window and loaded no PHP: PHP is not there (high confidence).
+//   "Not seen - no web server start in <N>d" -> serving, but no process start to inspect: the one residual blind spot
+//   (e.g. Apache + PHP module up longer than the lookback). The "via" process in ActiveWebPorts says what is listening: ntoskrnl.exe = HTTP.sys
+//   (IIS, ADFS, RD Gateway, Windows Admin Center, SSTP); nginx.exe, httpd.exe, java.exe etc. = that server. Check those on the host.
+let Lookback = 30d;                                                                          // event window for every check: max 30d in XDR Advanced Hunting
+let ND = (a:dynamic) { iff(array_length(a) > 0, strcat_array(a, ", "), "Not Detected") };
+// Check 1: inbound connections accepted on web ports. Proves a device is serving, even if its web server started before the lookback window.
+// Matches on port, not process, because IIS connections are recorded under ntoskrnl.exe (HTTP.sys), not w3wp.exe.
+let Active = DeviceNetworkEvents
+| where Timestamp > ago(Lookback) and ActionType == "InboundConnectionAccepted"
+| where LocalPort in (80, 443, 8080, 8443) and RemoteIPType != "Loopback"
+| extend Listener = iff(isempty(InitiatingProcessFileName), "unknown", InitiatingProcessFileName)   // process that accepted the connection
+| summarize Sources = dcount(RemoteIP), Public = dcountif(RemoteIP, RemoteIPType == "Public"), Listeners = make_set(Listener, 5) by DeviceId, LocalPort
+| summarize ActiveWebPorts = make_set(strcat(LocalPort, " (", Sources, " sources, ", Public, " public) via ", strcat_array(Listeners, "/")), 10) by DeviceId;
+// Check 2: web server processes that started, plus IIS app pool names (these often name the hosted site or app).
+let Web = DeviceProcessEvents
+| where Timestamp > ago(Lookback) and FileName in~ ("w3wp.exe", "httpd.exe", "nginx.exe", "caddy.exe", "lighttpd.exe", "frankenphp.exe")
+| extend AppPool = extract(@"-ap\s+""?([^""\s]+)", 1, ProcessCommandLine)          // empty for non-IIS processes
+| summarize WebServers = make_set(FileName, 10), AppPools = make_set_if(AppPool, isnotempty(AppPool), 20) by DeviceId;
+// Check 3: PHP seen? PHP detection block below is identical in hunts 1, 2 and 3 - change all three together.
+let PhpSeen = union
+    (DeviceProcessEvents | where Timestamp > ago(Lookback) and (FileName startswith "php" or FileName =~ "frankenphp.exe")    // PHP executables started
+        | where FileName matches regex @"(?i)^(php(-cgi|-win)?|frankenphp)\.exe$"),
+    (DeviceImageLoadEvents | where Timestamp > ago(Lookback) and FileName startswith "php"                                    // PHP engine DLLs loaded (IIS, Apache)
+        | where FileName matches regex @"(?i)^php\d*(ts|isapi|apache[\w_]*)?\.dll$"),
+    (DeviceTvmSoftwareInventory | where SoftwareName has "php" or SoftwareVendor =~ "php")                               // PHP in installed software
+| distinct DeviceId | extend PHP = "PHP seen (see hunt 2)";
+// Current IPv4 addresses: latest report per network adapter in the last 7 days, link-local addresses removed.
+let IPs = DeviceNetworkInfo | where Timestamp > ago(7d)
+| summarize arg_max(Timestamp, IPAddresses) by DeviceId, NetworkAdapterName
+| mv-expand IP = parse_json(IPAddresses) | extend Addr = tostring(IP.IPAddress)
+| where isnotempty(parse_ipv4(Addr)) and Addr !startswith "169.254."
+| summarize IPv4 = make_set(Addr, 10) by DeviceId;
+// Device list: onboarded Windows endpoints only. Discovered/unmanaged devices have no telemetry to check.
+DeviceInfo | where Timestamp > ago(Lookback) and OSPlatform startswith "Windows"
+| summarize arg_max(Timestamp, OSPlatform, OnboardingStatus, DeviceCategory) by DeviceId, DeviceName
+| where OnboardingStatus == "Onboarded" and DeviceCategory == "Endpoint"
+| lookup kind=leftouter Active on DeviceId
+| lookup kind=leftouter Web on DeviceId
+| extend Serving = isnotempty(ActiveWebPorts) or isnotempty(WebServers)
+// | where Serving                                                                           // uncomment for evidence-only rows
+| lookup kind=leftouter PhpSeen on DeviceId
+| lookup kind=leftouter IPs on DeviceId
+| extend PHP = case(isnotempty(PHP), PHP, isnotempty(WebServers) or isempty(ActiveWebPorts), "Not seen", strcat("Not seen - no web server start in ", toint(Lookback / 1d), "d"))
+| extend IsServer = OSPlatform startswith "WindowsServer"                                 // servers sort to the top
+| order by IsServer desc, PHP desc, Serving desc, DeviceName asc                            // servers, then PHP seen, blind spot, serving, rest
+| project DeviceName, OSPlatform, IPv4, PHP, ActiveWebPorts = ND(ActiveWebPorts), WebServers = ND(WebServers), AppPools = ND(AppPools), LastSeen = Timestamp
