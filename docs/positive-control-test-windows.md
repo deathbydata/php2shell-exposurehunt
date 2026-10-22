@@ -4,12 +4,12 @@
 
 This test proves the three PHP2Shell Windows hunts detect what they claim, by creating a known positive on an onboarded Windows device and checking each column. Hunt 1/3 lists devices with any PHP signal; hunt 2/3 breaks that evidence out with versions; hunt 3/3 is the safety net, listing devices actively serving on web ports and whether PHP was seen. An empty result looks the same whether the estate is clean or a hunt is broken; this test tells the two apart.
 
-- **Target:** an onboarded Windows laptop or VM in our own tenant, not a customer device.
-- **Not WSL:** Defender only sees WSL processes with the separate MDE WSL plug-in, and those events are expected to sit under the Windows host. Test any Linux query on an onboarded Linux VM instead.
+- **Target:** an onboarded Windows laptop or VM you control, not a production system.
+- **Not WSL:** Defender only sees WSL processes with the separate MDE WSL plug-in, and how those events are attributed is not verified here. Test the Linux hunts on an onboarded Linux VM instead.
 
 ## Before you start
 
-- [ ] Run the hunts in the tenant the test device is onboarded to (ours). The query logic is the same in every tenant.
+- [ ] Run the hunts in the tenant the test device is onboarded to. The query logic is the same in every tenant.
 - [ ] Use a **patched** PHP release only (8.4.27 or 8.3.36 or later). The test briefly exposes PHP on the local network.
 - [ ] Confirm the test is allowed under internal policy and tell the SOC team. A new internet-downloaded binary listening on a port may raise an alert.
 - [ ] Have a second device on the same network (PC or phone) to make an inbound connection.
