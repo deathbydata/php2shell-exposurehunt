@@ -2,7 +2,7 @@
 
 Defender XDR exposure hunting for PHP2Shell (CVE-2026-109618 / CVE-2026-109619).
 
-v3.3 · 22 Oct 2026
+v3.4 · 23 Oct 2026
 
 **Purpose:** Find onboarded devices actively running PHP that could be exposed to PHP2Shell.
 
@@ -15,12 +15,13 @@ v3.3 · 22 Oct 2026
 | 1 | [`windows/01-any-php.kql`](queries/windows/01-any-php.kql) | [`linux/01-any-php.kql`](queries/linux/01-any-php.kql) | Any PHP? Yes/no per device. |
 | 2 | [`windows/02-evidence-breakout.kql`](queries/windows/02-evidence-breakout.kql) | [`linux/02-evidence-breakout.kql`](queries/linux/02-evidence-breakout.kql) | Evidence breakout with versions. |
 | 3 | [`windows/03-safety-net.kql`](queries/windows/03-safety-net.kql) | [`linux/03-safety-net.kql`](queries/linux/03-safety-net.kql) | Safety net: devices serving on web ports, the listening process, and PHP status. |
+| 4 | [`windows/04-defender-cve-check.kql`](queries/windows/04-defender-cve-check.kql) | [`linux/04-defender-cve-check.kql`](queries/linux/04-defender-cve-check.kql) | Cross-check: does Defender Vulnerability Management flag the CVEs where the hunts see PHP? |
 
 ## What is hunted for
 
 All event checks use one lookback window, `let Lookback = 30d;` at the top of each hunt. IP addresses come from the latest report per adapter in the last 7 days. Installed software is the current TVM snapshot. Only onboarded endpoints are checked (`OnboardingStatus == "Onboarded"`, `DeviceCategory == "Endpoint"`).
 
-### PHP detection block (hunts 1, 2 and 3)
+### PHP detection block (hunts 1, 2, 3 and 4)
 
 A device counts as **PHP seen** if any one of these matches.
 
@@ -71,6 +72,19 @@ The table lists common names, not an allow-list: any name fitting the pattern ma
 | `Not seen` | No PHP evidence, and either a web server started in the window (high confidence) or the device isn't serving web. |
 | `Not seen - no web server start in <N>d` (N = Lookback) | Serving on web ports, but no web-server process start to inspect. This is the residual blind spot: check the `via` process on the host. |
 
+### Hunt 4 cross-check
+
+Hunt 4 compares Defender Vulnerability Management findings (`DeviceTvmSoftwareVulnerabilities`, `CveId` in CVE-2026-109618 / CVE-2026-109619, current snapshot) with the PHP detection block above.
+
+| Agreement | Meaning | Action |
+| --- | --- | --- |
+| `Both` | Defender flags the CVEs and the hunts see PHP | Confirmed exposure: patch first |
+| `Defender only` | Defender flags software that none of the hunts' name filters match. Idle installs are already caught by the software check | Treat as vulnerable, and add the software's name to the detection block |
+| `Hunt only` | PHP is present but not flagged: either a fixed build (for example an Ubuntu backport), or a package Defender doesn't map | Confirm with the version or package changelog before closing |
+| `Neither` | No PHP evidence and no Defender finding | None |
+
+It also shows severity, Defender's recommended update, and `CveTags` (for example `NoSecurityUpdate` on end-of-life branches).
+
 ## Usage
 
 - Each hunt returns every onboarded device for its OS by default, servers first, then evidence rows first. To return evidence-only rows, uncomment the line marked `uncomment for evidence-only rows`.
@@ -85,14 +99,16 @@ The table lists common names, not an allow-list: any name fitting the pattern ma
 **Both OSes:**
 - Active PHP only. A process that started before the lookback window and never restarted leaves no process event; hunt 3 flags these as "no web server start in <N>d" for a manual check.
 - Version checks are version-number based. Vendor-bundled builds may carry fixes without a version change.
-- The TVM name filters are unverified against every tenant's inventory naming.
+- Defender's CVE mapping (hunt 4) doesn't cover every package source. Observed: Defender didn't flag two hosts running mod_php 7.4.33 from a third-party PPA, though 7.4 has no upstream fix; the cause is unconfirmed. Treat `Hunt only` as unresolved until checked.
 
 **Windows:**
 - Defender does not record every DLL load.
 - Zip installs of PHP usually do not appear in installed software.
 
-**Linux, unverified until the Linux positive-control test passes:**
-- That TVM package names contain "php" (hunts 1-3 package check). - Pending, positive real world results so far point to this works, need final verification.
+**Confirmed against real installations (Oct 2026):**
+- **Windows:** IIS with FastCGI PHP 8.2 was detected by process (with version), engine DLL (`php8.dll` loaded by `php-cgi.exe`) and installed software. The listener showed as `ntoskrnl.exe` (HTTP.sys). TVM names PHP `php`.
+- **Linux:** Ubuntu mod_php 7.4, 8.1 and 8.3, and php-fpm 7.4, were detected by process (with version hint) and package. TVM package names follow `<package>_for_linux`, for example `libapache2-mod-php8.3_for_linux`. Defender records `InboundConnectionAccepted` on Linux, and Linux servers report `DeviceType == "Server"`.
+- **Lookback:** v3.3's parameterised `Lookback`, including hunt 3's window label, ran live on both OSes.
 
 **Linux coverage gaps:**
 - There is no library-load check. Apache mod_php, and php-fpm running since before the window (its workers are forked, not started), are found only through the package check.
@@ -101,7 +117,7 @@ The table lists common names, not an allow-list: any name fitting the pattern ma
 
 ## Maintenance
 
-The PHP detection block is identical within each OS's three hunts. Change all three together; `npm test` fails if they drift. When you change a detection regex, update the expected matches and non-matches in `tests/lint/patterns.test.js`. The test reads the regex from the query, so it's checking your edit, not a copy.
+The PHP detection block is identical within each OS's four hunts. Change all four together; `npm test` fails if they drift. When you change a detection regex, update the expected matches and non-matches in `tests/lint/patterns.test.js`. The test reads the regex from the query, so it's checking your edit, not a copy.
 
 ## Testing
 
@@ -111,13 +127,22 @@ The PHP detection block is identical within each OS's three hunts. Change all th
   - The detection regexes, read from the queries, against known PHP and non-PHP file names.
   - The lookback rules: defined once per hunt, used everywhere, the same value in all hunts, and at most 30d.
   - That every regex quoted in this README is identical to the one in the queries.
-- **Live - Note these queries have been used to detect real PHP instances in Windows and Linux across XDR, but have not been extensively tested with intentional positive control tests. This will be removed when I test them, or you can test and submit a PR :) :** [`docs/positive-control-test-windows.md`](docs/positive-control-test-windows.md) and [`docs/positive-control-test-linux.md`](docs/positive-control-test-linux.md).
+- **Live (before relying on results):** [`docs/positive-control-test-windows.md`](docs/positive-control-test-windows.md) and [`docs/positive-control-test-linux.md`](docs/positive-control-test-linux.md).
 
-The offline checks prove syntax, column names, consistency and name matching, not results. Only the positive-control tests prove detection.
+The offline checks prove syntax, column names, consistency and name matching, not results. Only live runs prove detection: the positive-control tests, or real installations (see Known limitations). Hunt 4 can't be exercised by the positive-control tests, because they use patched PHP builds.
+
+## Licence and disclaimer
+
+Released under the [MIT License](LICENSE). Provided as-is, without warranty: these hunts find exposure, not compromise. Validate them in your own tenant with the positive-control tests in `docs/` before relying on results.
 
 ## Changes
 
+- **v3.4:**
+  - Hunt 4 (Defender CVE cross-check) added for both OSes.
+  - Linux and TVM assumptions moved to confirmed, after live runs against real installations.
+  - Observation added that Defender may not map third-party package sources.
 - **v3.3:**
+  - MIT licence and disclaimer added.
   - Lookback is set once per hunt (`let Lookback = 30d;`) instead of being hard-coded in each check.
   - Hunt 3's label shows the actual window.
   - README shows the actual regex patterns, marks the listed names as examples, and is checked against the queries by `readme-sync.test.js`.
@@ -128,6 +153,7 @@ The offline checks prove syntax, column names, consistency and name matching, no
   - Regex regression test added.
   - Windows test document renamed.
   - Known limitations section added.
+  - Project renamed to php2shell-exposurehunt.
   - Detailed "What is hunted for" section added.
 - **v3.1:** hunt 3 shows the process that accepted each web-port connection (`via <process>`); `ntoskrnl.exe` = HTTP.sys.
 - **v3.0:** first release: three Windows hunts, offline lint, positive-control test.

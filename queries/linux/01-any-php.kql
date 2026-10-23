@@ -2,7 +2,7 @@
 // Surface: Defender XDR Advanced Hunting (the TVM table is not queryable in Sentinel). Scope: onboarded Linux endpoints, lookback set once by Lookback below (default 30d, the Advanced Hunting maximum).
 // Default results: every onboarded Linux device; servers first, then "PHP seen" first within each group. All "Not seen" = no PHP on any onboarded Linux device.
 // To return evidence-only rows, uncomment the line marked "uncomment for evidence-only rows".
-// PHP detection block below is identical in Linux hunts 1, 2 and 3 - change all three together.
+// PHP detection block below is identical in Linux hunts 1, 2, 3 and 4 - change all four together.
 // No library-load check on Linux: PHP inside Apache (mod_php), or php-fpm started before the lookback window, is found via installed packages.
 let Lookback = 30d;                                                                          // event window for every check: max 30d in XDR Advanced Hunting
 let PhpDevices = union

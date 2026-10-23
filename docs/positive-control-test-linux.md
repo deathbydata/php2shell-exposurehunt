@@ -5,7 +5,7 @@
 This test proves the three Linux PHP2Shell hunts detect what they claim, by creating a known positive on an onboarded Linux device and checking each column. An empty result looks the same whether the estate is clean or a hunt is broken; this test tells the two apart.
 
 - **Target:** an onboarded Linux VM you control, not a production system. Avoid WSL: Defender only sees WSL with the separate MDE WSL plug-in, and whether those events appear as a Linux device in these hunts is not verified.
-- **Not exercised:** Apache mod_php and long-running php-fpm (both rely on the package check), and the `InboundConnectionAccepted` event on Linux until this test confirms it.
+- **Not exercised:** Apache mod_php and long-running php-fpm (both rely on the package check), and hunt 4, which needs a vulnerable build. These have been confirmed against real installations instead (see the README).
 
 ## Before you start
 

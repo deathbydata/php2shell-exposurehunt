@@ -7,5 +7,6 @@
   },
   "dependencies": {
     "@kusto/language-service-next": "12.4.1"
-  }
+  },
+  "license": "MIT"
 }

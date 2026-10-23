@@ -21,7 +21,7 @@ let Active = DeviceNetworkEvents
 let Web = DeviceProcessEvents
 | where Timestamp > ago(Lookback) and FileName in~ ("httpd", "apache2", "nginx", "lshttpd", "litespeed", "openlitespeed", "caddy", "lighttpd", "frankenphp")
 | summarize WebServers = make_set(FileName, 10) by DeviceId;
-// Check 3: PHP seen? PHP detection block below is identical in Linux hunts 1, 2 and 3 - change all three together.
+// Check 3: PHP seen? PHP detection block below is identical in Linux hunts 1, 2, 3 and 4 - change all four together.
 let PhpSeen = union
     (DeviceProcessEvents | where Timestamp > ago(Lookback) and (FileName startswith "php" or FileName startswith "lsphp" or FileName =~ "frankenphp")    // PHP binaries started
         | where FileName matches regex @"(?i)^(php[\d.]*|php-(fpm|cgi)[\d.]*|lsphp[\d.]*|frankenphp)$"),

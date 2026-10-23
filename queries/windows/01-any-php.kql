@@ -2,7 +2,7 @@
 // Surface: Defender XDR Advanced Hunting (the TVM table is not queryable in Sentinel). Scope: onboarded Windows endpoints, lookback set once by Lookback below (default 30d, the Advanced Hunting maximum).
 // Default results: every onboarded Windows device; servers first, then "PHP seen" first within each group. All "Not seen" = no PHP on any onboarded Windows device.
 // To return evidence-only rows, uncomment the line marked "uncomment for evidence-only rows".
-// PHP detection block below is identical in hunts 1, 2 and 3 - change all three together.
+// PHP detection block below is identical in hunts 1, 2, 3 and 4 - change all four together.
 let Lookback = 30d;                                                                          // event window for every check: max 30d in XDR Advanced Hunting
 let PhpDevices = union
     (DeviceProcessEvents | where Timestamp > ago(Lookback) and (FileName startswith "php" or FileName =~ "frankenphp.exe")    // PHP executables started

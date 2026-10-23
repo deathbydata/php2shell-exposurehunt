@@ -4,7 +4,7 @@
 // To return evidence-only rows, uncomment the line marked "uncomment for evidence-only rows".
 // Fixed releases (21 Oct 2026): 8.5.12, 8.4.27, 8.3.36, 8.2.35. Distros backport fixes WITHOUT changing the upstream version:
 // confirm with the package changelog or distro security tracker (e.g. apt changelog <pkg> | grep CVE-2026-1096, rpm -q --changelog <pkg>).
-// PHP detection block below is identical in Linux hunts 1, 2 and 3 - change all three together. Here each check also records what it found.
+// PHP detection block below is identical in Linux hunts 1, 2, 3 and 4 - change all four together. Here each check also records what it found.
 let Lookback = 30d;                                                                          // event window for every check: max 30d in XDR Advanced Hunting
 let ND = (a:dynamic) { iff(array_length(a) > 0, strcat_array(a, ", "), "Not Detected") };
 let Evidence = union

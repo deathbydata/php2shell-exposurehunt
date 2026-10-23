@@ -22,7 +22,7 @@ let Web = DeviceProcessEvents
 | where Timestamp > ago(Lookback) and FileName in~ ("w3wp.exe", "httpd.exe", "nginx.exe", "caddy.exe", "lighttpd.exe", "frankenphp.exe")
 | extend AppPool = extract(@"-ap\s+""?([^""\s]+)", 1, ProcessCommandLine)          // empty for non-IIS processes
 | summarize WebServers = make_set(FileName, 10), AppPools = make_set_if(AppPool, isnotempty(AppPool), 20) by DeviceId;
-// Check 3: PHP seen? PHP detection block below is identical in hunts 1, 2 and 3 - change all three together.
+// Check 3: PHP seen? PHP detection block below is identical in hunts 1, 2, 3 and 4 - change all four together.
 let PhpSeen = union
     (DeviceProcessEvents | where Timestamp > ago(Lookback) and (FileName startswith "php" or FileName =~ "frankenphp.exe")    // PHP executables started
         | where FileName matches regex @"(?i)^(php(-cgi|-win)?|frankenphp)\.exe$"),
